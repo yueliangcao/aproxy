@@ -1,12 +1,16 @@
 package main
 
 import (
+	"./config"
 	"./netx"
 	"encoding/binary"
+	"encoding/json"
 	"errors"
 	"fmt"
 	"io"
+	"io/ioutil"
 	"net"
+	"os"
 	"strconv"
 )
 
@@ -110,13 +114,15 @@ func handleConnection(conn net.Conn) (err error) {
 }
 
 func main() {
-	const (
-		lnAddr = "127.0.0.1:8001"
-	)
+	cfg, err := config.Parse("config.json")
+	if err != nil {
+		fmt.Println("config parse err: " + err.Error()
+		return
+	}
 
-	fmt.Println("server start, listen to: " + lnAddr)
+	fmt.Println("server start, listen to: " + cfg.LnAddr)
 
-	ln, err := net.Listen("tcp", lnAddr)
+	ln, err := net.Listen("tcp", cfg.LnAddr)
 	if err != nil {
 		fmt.Println("listen err: " + err.Error())
 		return
