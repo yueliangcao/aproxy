@@ -4,13 +4,10 @@ import (
 	"./config"
 	"./netx"
 	"encoding/binary"
-	"encoding/json"
 	"errors"
 	"fmt"
 	"io"
-	"io/ioutil"
 	"net"
-	"os"
 	"strconv"
 )
 
@@ -116,7 +113,7 @@ func handleConnection(conn net.Conn) (err error) {
 func main() {
 	cfg, err := config.Parse("config.json")
 	if err != nil {
-		fmt.Println("config parse err: " + err.Error()
+		fmt.Println("config parse err: " + err.Error())
 		return
 	}
 
