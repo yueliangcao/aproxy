@@ -2,6 +2,7 @@ package main
 
 import (
 	"./config"
+	"./logx"
 	"./netx"
 	"encoding/binary"
 	"errors"
@@ -19,6 +20,9 @@ var (
 	errReqExtraData  = errors.New("socks request get extra data")
 	errCmd           = errors.New("socks command not supported")
 )
+
+//var info *net.Conn
+var logger *logx.Logger
 
 func getRequest(conn net.Conn) (extra []byte, host string, err error) {
 	const (
@@ -80,9 +84,27 @@ func getRequest(conn net.Conn) (extra []byte, host string, err error) {
 }
 
 func handleConnection(conn net.Conn) (err error) {
+	isCloseConn := true
 	defer func() {
-		conn.Close()
+		if isCloseConn {
+			conn.Close()
+		}
 	}()
+
+	//根据连接后的第一次请求的第一个byte，判断连接类型
+	b := [1]byte{}
+	if _, err := conn.Read(b[:]); err != nil {
+		fmt.Println("read type err: " + err.Error())
+		return err
+	}
+
+	fmt.Printf("conn type :%d \n", b[0])
+	if b[0] == 1 {
+		//info = conn
+		logger = logx.New(conn, "", logx.LstdFlags)
+		isCloseConn = false
+		return nil
+	}
 
 	extra, host, err := getRequest(conn)
 	if err != nil {
@@ -134,6 +156,7 @@ func main() {
 			return
 		}
 		fmt.Printf("new accept conn: %s \n", conn.RemoteAddr())
+		logger.Printf("new accept conn: %s \n", conn.RemoteAddr())
 		go handleConnection(netx.NewConn(conn))
 	}
 

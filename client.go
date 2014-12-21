@@ -168,7 +168,11 @@ func handleConnection(conn net.Conn) (err error) {
 	}
 	remote = netx.NewConn(remote)
 
-	if _, err := remote.Write(rawaddr); err != nil {
+	buflen := len(rawaddr) + 1
+	buf := make([]byte, buflen)
+	buf[0] = 0
+	copy(buf[1:], rawaddr)
+	if _, err := remote.Write(buf); err != nil {
 		fmt.Println("remote write err: " + err.Error())
 		return err
 	}
