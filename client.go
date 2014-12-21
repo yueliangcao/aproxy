@@ -1,6 +1,7 @@
 package main
 
 import (
+	"./config"
 	"./netx"
 	"encoding/binary"
 	"errors"
@@ -22,6 +23,11 @@ var (
 const (
 	socksVer5       = 5
 	socksCmdConnect = 1
+)
+
+var (
+	lnAddr  string
+	svrAddr string
 )
 
 func getRequest(conn net.Conn) (rawaddr []byte, host string, err error) {
@@ -135,10 +141,6 @@ func handShake(conn net.Conn) (err error) {
 }
 
 func handleConnection(conn net.Conn) (err error) {
-	const (
-		svrAddr = "127.0.0.1:8001"
-	)
-
 	defer func() {
 		conn.Close()
 	}()
@@ -178,11 +180,16 @@ func handleConnection(conn net.Conn) (err error) {
 }
 
 func main() {
-	const (
-		lnAddr = "127.0.0.1:8000"
-	)
+	cfg, err := config.Parse("client.cfg")
+	if err != nil {
+		fmt.Println("config parse err: " + err.Error())
+		return
+	}
 
-	fmt.Println("server start, listen to: " + lnAddr)
+	lnAddr = cfg["ln_addr"].(string)
+	svrAddr = cfg["svr_addr"].(string)
+
+	fmt.Printf("client start, listen to: %s, send to: %s\n", lnAddr, svrAddr)
 
 	ln, err := net.Listen("tcp", lnAddr)
 	if err != nil {

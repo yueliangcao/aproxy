@@ -7,11 +7,7 @@ import (
 	"os"
 )
 
-type Config struct {
-	LnAddr string `json:lnAddr`
-}
-
-func Parse(path string) (cfg *Config, err error) {
+func Parse(path string) (cfg map[string]interface{}, err error) {
 	file, err := os.Open(path)
 
 	if err != nil {
@@ -25,9 +21,11 @@ func Parse(path string) (cfg *Config, err error) {
 		return
 	}
 
-	cfg = &Config{}
+	cfg = map[string]interface{}{}
 
-	if err = json.Unmarshal(data, cfg); err != nil {
+	//fmt.Println(string(data))
+
+	if err = json.Unmarshal(data, &cfg); err != nil {
 		fmt.Println("unmarshal json err :" + err.Error())
 		return
 	}

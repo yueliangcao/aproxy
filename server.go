@@ -111,15 +111,17 @@ func handleConnection(conn net.Conn) (err error) {
 }
 
 func main() {
-	cfg, err := config.Parse("config.json")
+	cfg, err := config.Parse("server.cfg")
 	if err != nil {
 		fmt.Println("config parse err: " + err.Error())
 		return
 	}
 
-	fmt.Println("server start, listen to: " + cfg.LnAddr)
+	lnAddr := cfg["ln_addr"].(string)
 
-	ln, err := net.Listen("tcp", cfg.LnAddr)
+	fmt.Println("server start, listen to: " + lnAddr)
+
+	ln, err := net.Listen("tcp", lnAddr)
 	if err != nil {
 		fmt.Println("listen err: " + err.Error())
 		return
