@@ -1,29 +1,36 @@
 package netx
 
 import (
-	//"fmt"
 	"crypto/cipher"
+	"io"
+	"log"
 	"net"
+	_ "reflect"
+	"strings"
+	_ "unsafe"
 )
 
-type Conn struct {
-	net.Conn
-	R cipher.StreamReader
-	W cipher.StreamWriter
+type conn struct {
+	*net.TCPConn
+	r cipher.StreamReader
+	w cipher.StreamWriter
 }
 
-func NewConn(conn net.Conn) *Conn {
-	return &Conn{conn, cipher.StreamReader{NewCipher(true), conn}, cipher.StreamWriter{NewCipher(false), conn, nil}}
+func NewConn(c *net.TCPConn) net.Conn {
+	return &conn{c, cipher.StreamReader{NewCipher(true), c}, cipher.StreamWriter{NewCipher(false), c, nil}}
 }
 
-func (conn *Conn) Read(b []byte) (n int, err error) {
-	//return conn.Conn.Read(b)
-	return conn.R.Read(b)
+func (c *conn) Read(b []byte) (n int, err error) {
+	return c.r.Read(b)
 }
 
-func (conn *Conn) Write(b []byte) (n int, err error) {
-	//return conn.Conn.Write(b)
-	return conn.W.Write(b)
+func (c *conn) Write(b []byte) (n int, err error) {
+	return c.w.Write(b)
+}
+
+type TCPConnCloser interface {
+	CloseRead() error
+	CloseWrite() error
 }
 
 func Pipe(dst net.Conn, src net.Conn) {
@@ -32,18 +39,23 @@ func Pipe(dst net.Conn, src net.Conn) {
 		dst.Close()
 	}()
 
-	var buf [4096]byte
+	buf := make([]byte, 4<<10)
+
 	for {
-		n, err := src.Read(buf[:])
-		if err != nil {
-			//fmt.Printf("pipe src %s read err: %s \n", src.RemoteAddr(), err.Error())
-			return
+		n, rErr := src.Read(buf[:])
+		if n > 0 {
+			if _, wErr := dst.Write(buf[:n]); wErr != nil {
+				log.Println("pipe write err:", wErr)
+				break
+			}
 		}
 
-		n, err = dst.Write(buf[:n])
-		if err != nil {
-			//fmt.Printf("pipe dst %s write err: %s \n", dst.RemoteAddr(), err.Error())
-			return
+		if rErr != nil {
+			if rErr != io.EOF && !strings.HasSuffix(rErr.Error(), "use of closed network connection") {
+				log.Println("pipe read err:", rErr)
+				log.Println(src.RemoteAddr(), "->", dst.RemoteAddr())
+			}
+			break
 		}
 	}
 }

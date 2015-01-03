@@ -5,9 +5,10 @@ import (
 	"./netx"
 	"encoding/binary"
 	"errors"
-	"fmt"
 	"io"
+	"log"
 	"net"
+	"runtime"
 	"strconv"
 )
 
@@ -22,35 +23,40 @@ var (
 
 func getRequest(conn net.Conn) (extra []byte, host string, err error) {
 	const (
-		idType  = 0 // address type index
-		idIP0   = 1 // ip addres start index
-		idDmLen = 1 // domain address length index
-		idDm0   = 2 // domain address start index
+		INX_TYPE   = 0 // address type index
+		INX_IP0    = 1 // ip addres start index
+		INX_DM_LEN = 1 // domain address length index
+		INX_DM0    = 2 // domain address start index
 
-		typeIPv4 = 1 // type is ipv4 address
-		typeDm   = 3 // type is domain address
-		typeIPv6 = 4 // type is ipv6 address
+		TYPE_IPV4 = 1 // type is ipv4 address
+		TYPE_DM   = 3 // type is domain address
+		TYPE_IPV6 = 4 // type is ipv6 address
 
-		lenIPv4   = 1 + net.IPv4len + 2 // 1addrType + ipv4 + 2port
-		lenIPv6   = 1 + net.IPv6len + 2 // 1addrType + ipv6 + 2port
-		lenDmBase = 1 + 1 + 2           // 1addrType + 1addrLen + 2port, plus addrLen
+		LEN_IPV4    = 1 + net.IPv4len + 2 // 1addrType + ipv4 + 2port
+		LEN_IPV6    = 1 + net.IPv6len + 2 // 1addrType + ipv6 + 2port
+		LEN_DM_BASE = 1 + 1 + 2           // 1addrType + 1addrLen + 2port, plus addrLen
 	)
-	// refer to getRequest in server.go for why set buffer size to 263
-	buf := make([]byte, 263)
+	// +------+----------+----------+
+	// | ATYP | DST.ADDR | DST.PORT |
+	// +------+----------+----------+
+	// |  1   | Variable |    2     |
+	// +------+----------+----------+
+	// 260 = 1 + 257(1addrLen + 256) + 2
+	buf := make([]byte, 260)
 	var n int
 	// read till we get possible domain length field
-	if n, err = io.ReadAtLeast(conn, buf, idDmLen+1); err != nil {
+	if n, err = io.ReadAtLeast(conn, buf, INX_DM_LEN+1); err != nil {
 		return
 	}
 
 	reqLen := -1
-	switch buf[idType] {
-	case typeIPv4:
-		reqLen = lenIPv4
-	case typeIPv6:
-		reqLen = lenIPv6
-	case typeDm:
-		reqLen = int(buf[idDmLen]) + lenDmBase
+	switch buf[INX_TYPE] {
+	case TYPE_IPV4:
+		reqLen = LEN_IPV4
+	case TYPE_IPV6:
+		reqLen = LEN_IPV6
+	case TYPE_DM:
+		reqLen = int(buf[INX_DM_LEN]) + LEN_DM_BASE
 	default:
 		err = errAddrType
 		return
@@ -64,13 +70,13 @@ func getRequest(conn net.Conn) (extra []byte, host string, err error) {
 		}
 	}
 
-	switch buf[idType] {
-	case typeIPv4:
-		host = net.IP(buf[idIP0 : idIP0+net.IPv4len]).String()
-	case typeIPv6:
-		host = net.IP(buf[idIP0 : idIP0+net.IPv6len]).String()
-	case typeDm:
-		host = string(buf[idDm0 : idDm0+buf[idDmLen]])
+	switch buf[INX_TYPE] {
+	case TYPE_IPV4:
+		host = net.IP(buf[INX_IP0 : INX_IP0+net.IPv4len]).String()
+	case TYPE_IPV6:
+		host = net.IP(buf[INX_IP0 : INX_IP0+net.IPv6len]).String()
+	case TYPE_DM:
+		host = string(buf[INX_DM0 : INX_DM0+buf[INX_DM_LEN]])
 	}
 	port := binary.BigEndian.Uint16(buf[reqLen-2 : reqLen])
 	host = net.JoinHostPort(host, strconv.Itoa(int(port)))
@@ -79,75 +85,74 @@ func getRequest(conn net.Conn) (extra []byte, host string, err error) {
 	return
 }
 
-func handleConnection(conn net.Conn) (err error) {
+func handleConnection(conn net.Conn) {
 	defer func() {
 		conn.Close()
+		log.Println("connect:", conn.RemoteAddr(), "closed")
 	}()
-
-	//根据连接后的第一次请求的第一个byte，判断连接类型
-	b := [1]byte{}
-	if _, err := conn.Read(b[:]); err != nil {
-		fmt.Println("read type err: " + err.Error())
-		return err
-	}
-
-	fmt.Printf("conn type :%d \n", b[0])
-	if b[0] == 1 {
-		return nil
-	}
 
 	extra, host, err := getRequest(conn)
 	if err != nil {
-		fmt.Println("get request err: " + err.Error())
-		return err
+		log.Println("get request err:", err)
+		return
 	}
 
 	remote, err := net.Dial("tcp", host)
 	if err != nil {
-		fmt.Println("remote dial err: " + err.Error())
-		return err
+		log.Println("remote dial err:", err)
+		return
 	}
-	fmt.Println("remote dial addr :" + host)
+	log.Println("remote dial addr:", host)
 
 	if extra != nil {
 		if _, err := remote.Write(extra); err != nil {
-			fmt.Println("remote write extra err: " + err.Error())
-			return err
+			log.Println("remote write extra err:", err)
+			return
 		}
 	}
 
-	go netx.Pipe(remote, conn)
+	done := make(chan bool)
+
+	go func() {
+		netx.Pipe(remote, conn)
+		done <- true
+	}()
+
 	netx.Pipe(conn, remote)
 
-	return err
+	<-done
 }
 
 func main() {
+	n := runtime.NumCPU()
+	log.Println("cpu num:", n)
+	//runtime.GOMAXPROCS(n)
+
 	cfg, err := config.Parse("server.cfg")
 	if err != nil {
-		fmt.Println("config parse err: " + err.Error())
+		log.Panicln("config parse err:", err)
 		return
 	}
 
 	lnAddr := cfg["ln_addr"].(string)
 
-	fmt.Println("server start, listen to: " + lnAddr)
+	log.Println("server start, listen to:", lnAddr)
 
 	ln, err := net.Listen("tcp", lnAddr)
 	if err != nil {
-		fmt.Println("listen err: " + err.Error())
+		log.Panicln("listen err:", err)
 		return
 	}
 
 	for {
 		conn, err := ln.Accept()
 		if err != nil {
-			fmt.Println("accept err: " + err.Error())
+			log.Println("accept err", err)
 			return
 		}
-		fmt.Printf("new accept conn: %s \n", conn.RemoteAddr())
-		go handleConnection(netx.NewConn(conn))
+		log.Println("new accept conn:", conn.RemoteAddr())
+		go handleConnection(netx.NewConn(conn.(*net.TCPConn)))
 	}
 
-	fmt.Println("server end")
+	log.Println("server end")
 }

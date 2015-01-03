@@ -5,8 +5,8 @@ import (
 	"./netx"
 	"encoding/binary"
 	"errors"
-	"fmt"
 	"io"
+	"log"
 	"net"
 	"strconv"
 )
@@ -21,8 +21,8 @@ var (
 )
 
 const (
-	socksVer5       = 5
-	socksCmdConnect = 1
+	SOCKS_VER_5       = 5
+	SOCKS_CMD_CONNECT = 1
 )
 
 var (
@@ -32,46 +32,52 @@ var (
 
 func getRequest(conn net.Conn) (rawaddr []byte, host string, err error) {
 	const (
-		idVer   = 0
-		idCmd   = 1
-		idType  = 3 // address type index
-		idIP0   = 4 // ip addres start index
-		idDmLen = 4 // domain address length index
-		idDm0   = 5 // domain address start index
+		INX_VER    = 0
+		INX_CMD    = 1
+		INX_TYPE   = 3 // address type index
+		INX_IP0    = 4 // ip addres start index
+		INX_DM_LEN = 4 // domain address length index
+		INX_DM0    = 5 // domain address start index
 
-		typeIPv4 = 1 // type is ipv4 address
-		typeDm   = 3 // type is domain address
-		typeIPv6 = 4 // type is ipv6 address
+		TYPE_IPV4 = 1 // type is ipv4 address
+		TYPE_DM   = 3 // type is domain address
+		TYPE_IPV6 = 4 // type is ipv6 address
 
-		lenIPv4   = 3 + 1 + net.IPv4len + 2 // 3(ver+cmd+rsv) + 1addrType + ipv4 + 2port
-		lenIPv6   = 3 + 1 + net.IPv6len + 2 // 3(ver+cmd+rsv) + 1addrType + ipv6 + 2port
-		lenDmBase = 3 + 1 + 1 + 2           // 3 + 1addrType + 1addrLen + 2port, plus addrLen
+		LEN_IPV4    = 3 + 1 + net.IPv4len + 2 // 3(ver+cmd+rsv) + 1addrType + ipv4 + 2port
+		LEN_IPV6    = 3 + 1 + net.IPv6len + 2 // 3(ver+cmd+rsv) + 1addrType + ipv6 + 2port
+		LEN_DM_BASE = 3 + 1 + 1 + 2           // 3(ver+cmd+rsv) + 1addrType + 1addrLen + 2port, plus addrLen
 	)
 	// refer to getRequest in server.go for why set buffer size to 263
+	// +----+-----+-------+------+----------+----------+
+	// |VER | CMD |  RSV  | ATYP | DST.ADDR | DST.PORT |
+	// +----+-----+-------+------+----------+----------+
+	// | 1  |  1  | X'00' |  1   | Variable |    2     |
+	// +----+-----+-------+------+----------+----------+
+	// 263 = 1 + 1 + 1 + 1 + 257(1addrLen + 256) + 2
 	buf := make([]byte, 263)
 	var n int
 	// read till we get possible domain length field
-	if n, err = io.ReadAtLeast(conn, buf, idDmLen+1); err != nil {
+	if n, err = io.ReadAtLeast(conn, buf, INX_DM_LEN+1); err != nil {
 		return
 	}
 	// check version and cmd
-	if buf[idVer] != socksVer5 {
+	if buf[INX_VER] != SOCKS_VER_5 {
 		err = errVer
 		return
 	}
-	if buf[idCmd] != socksCmdConnect {
+	if buf[INX_CMD] != SOCKS_CMD_CONNECT {
 		err = errCmd
 		return
 	}
 
 	reqLen := -1
-	switch buf[idType] {
-	case typeIPv4:
-		reqLen = lenIPv4
-	case typeIPv6:
-		reqLen = lenIPv6
-	case typeDm:
-		reqLen = int(buf[idDmLen]) + lenDmBase
+	switch buf[INX_TYPE] {
+	case TYPE_IPV4:
+		reqLen = LEN_IPV4
+	case TYPE_IPV6:
+		reqLen = LEN_IPV6
+	case TYPE_DM:
+		reqLen = int(buf[INX_DM_LEN]) + LEN_DM_BASE
 	default:
 		err = errAddrType
 		return
@@ -88,15 +94,15 @@ func getRequest(conn net.Conn) (rawaddr []byte, host string, err error) {
 		return
 	}
 
-	rawaddr = buf[idType:reqLen]
+	rawaddr = buf[INX_TYPE:reqLen]
 
-	switch buf[idType] {
-	case typeIPv4:
-		host = net.IP(buf[idIP0 : idIP0+net.IPv4len]).String()
-	case typeIPv6:
-		host = net.IP(buf[idIP0 : idIP0+net.IPv6len]).String()
-	case typeDm:
-		host = string(buf[idDm0 : idDm0+buf[idDmLen]])
+	switch buf[INX_TYPE] {
+	case TYPE_IPV4:
+		host = net.IP(buf[INX_IP0 : INX_IP0+net.IPv4len]).String()
+	case TYPE_IPV6:
+		host = net.IP(buf[INX_IP0 : INX_IP0+net.IPv6len]).String()
+	case TYPE_DM:
+		host = string(buf[INX_DM0 : INX_DM0+buf[INX_DM_LEN]])
 	}
 	port := binary.BigEndian.Uint16(buf[reqLen-2 : reqLen])
 	host = net.JoinHostPort(host, strconv.Itoa(int(port)))
@@ -106,25 +112,31 @@ func getRequest(conn net.Conn) (rawaddr []byte, host string, err error) {
 
 func handShake(conn net.Conn) (err error) {
 	const (
-		idVer     = 0
-		idNmethod = 1
+		INX_VER     = 0
+		INX_NMETHOD = 1
 	)
 	// version identification and method selection message in theory can have
 	// at most 256 methods, plus version and nmethod field in total 258 bytes
 	// the current rfc defines only 3 authentication methods (plus 2 reserved),
 	// so it won't be such long in practice
 
+	// +----+----------+----------+
+	// |VER | NMETHODS | METHODS  |
+	// +----+----------+----------+
+	// | 1  |    1     | 1 to 255 |
+	// +----+----------+----------+
+	// 258 = 1 + 1 + 256
 	buf := make([]byte, 258)
 
 	var n int
 	// make sure we get the nmethod field
-	if n, err = io.ReadAtLeast(conn, buf, idNmethod+1); err != nil {
+	if n, err = io.ReadAtLeast(conn, buf, INX_NMETHOD+1); err != nil {
 		return
 	}
-	if buf[idVer] != socksVer5 {
+	if buf[INX_VER] != SOCKS_VER_5 {
 		return errVer
 	}
-	nmethod := int(buf[idNmethod])
+	nmethod := int(buf[INX_NMETHOD])
 	msgLen := nmethod + 2
 	if n == msgLen { // handshake done, common case
 		// do nothing, jump directly to send confirmation
@@ -136,80 +148,83 @@ func handShake(conn net.Conn) (err error) {
 		return errAuthExtraData
 	}
 	// send confirmation: version 5, no authentication required
-	_, err = conn.Write([]byte{socksVer5, 0})
+	_, err = conn.Write([]byte{SOCKS_VER_5, 0})
 	return
 }
 
-func handleConnection(conn net.Conn) (err error) {
+func handleConnection(conn net.Conn) {
 	defer func() {
 		conn.Close()
 	}()
 
 	if err := handShake(conn); err != nil {
-		fmt.Println("socks handshake err: " + err.Error())
-		return err
+		log.Println("socks handshake err", err)
+		return
 	}
 
 	rawaddr, _, err := getRequest(conn)
 	if err != nil {
-		fmt.Println("socks get request err: " + err.Error())
-		return err
+		log.Println("socks get request err", err)
+		return
 	}
 
+	//send confirmation
 	if _, err = conn.Write([]byte{0x05, 0x00, 0x00, 0x01, 0x00, 0x00, 0x00, 0x00, 0x08, 0x43}); err != nil {
-		fmt.Println("send connection confirmation:", err)
-		return err
+		log.Println("send connection confirmation:", err)
+		return
 	}
 
 	remote, err := net.Dial("tcp", svrAddr)
 	if err != nil {
-		fmt.Println("remote dial err: " + err.Error())
-		return err
+		log.Println("remote dial err", err)
+		return
 	}
-	remote = netx.NewConn(remote)
+	remote = netx.NewConn(remote.(*net.TCPConn))
 
-	buflen := len(rawaddr) + 1
-	buf := make([]byte, buflen)
-	buf[0] = 0
-	copy(buf[1:], rawaddr)
-	if _, err := remote.Write(buf); err != nil {
-		fmt.Println("remote write err: " + err.Error())
-		return err
+	if _, err := remote.Write(rawaddr); err != nil {
+		log.Println("remote write err: ", err)
+		return
 	}
 
-	go netx.Pipe(remote, conn)
+	done := make(chan bool)
+
+	go func() {
+		netx.Pipe(remote, conn)
+		done <- true
+	}()
+
 	netx.Pipe(conn, remote)
 
-	return err
+	<-done
 }
 
 func main() {
 	cfg, err := config.Parse("client.cfg")
 	if err != nil {
-		fmt.Println("config parse err: " + err.Error())
+		log.Panicln("config parse err", err)
 		return
 	}
 
 	lnAddr = cfg["ln_addr"].(string)
 	svrAddr = cfg["svr_addr"].(string)
 
-	fmt.Printf("client start, listen to: %s, send to: %s\n", lnAddr, svrAddr)
+	log.Printf("client start, listen to: %s, send to: %s\n", lnAddr, svrAddr)
 
 	ln, err := net.Listen("tcp", lnAddr)
 	if err != nil {
-		fmt.Println("listen err: " + err.Error())
+		log.Panicln("listen err", err)
 		return
 	}
 
 	for {
 		conn, err := ln.Accept()
 		if err != nil {
-			fmt.Println("accept err: " + err.Error())
+			log.Println("accept err", err)
 			return
 		}
-		fmt.Printf("new accept conn: %s \n", conn.RemoteAddr())
+		log.Printf("new accept conn: %s \n", conn.RemoteAddr())
 		go handleConnection(conn)
 	}
 
-	fmt.Println("server end")
+	log.Println("client end")
 }
