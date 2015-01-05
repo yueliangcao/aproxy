@@ -153,8 +153,12 @@ func handShake(conn net.Conn) (err error) {
 }
 
 func handleConnection(conn net.Conn) {
+	connClosed := false
 	defer func() {
-		conn.Close()
+		if !connClosed {
+			conn.Close()
+		}
+		log.Println("connect:", conn.RemoteAddr(), "closed")
 	}()
 
 	if err := handShake(conn); err != nil {
@@ -179,23 +183,17 @@ func handleConnection(conn net.Conn) {
 		log.Println("remote dial err", err)
 		return
 	}
-	remote = netx.NewConn(remote.(*net.TCPConn))
+	remote = netx.NewConn(remote)
 
 	if _, err := remote.Write(rawaddr); err != nil {
 		log.Println("remote write err: ", err)
 		return
 	}
 
-	done := make(chan bool)
-
-	go func() {
-		netx.Pipe(remote, conn)
-		done <- true
-	}()
-
+	go netx.Pipe(remote, conn)
 	netx.Pipe(conn, remote)
 
-	<-done
+	connClosed = true
 }
 
 func main() {

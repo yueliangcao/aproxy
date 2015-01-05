@@ -86,8 +86,11 @@ func getRequest(conn net.Conn) (extra []byte, host string, err error) {
 }
 
 func handleConnection(conn net.Conn) {
+	connClosed := false
 	defer func() {
-		conn.Close()
+		if !connClosed {
+			conn.Close()
+		}
 		log.Println("connect:", conn.RemoteAddr(), "closed")
 	}()
 
@@ -111,16 +114,10 @@ func handleConnection(conn net.Conn) {
 		}
 	}
 
-	done := make(chan bool)
-
-	go func() {
-		netx.Pipe(remote, conn)
-		done <- true
-	}()
-
+	go netx.Pipe(remote, conn)
 	netx.Pipe(conn, remote)
 
-	<-done
+	connClosed = true
 }
 
 func main() {
@@ -151,7 +148,7 @@ func main() {
 			return
 		}
 		log.Println("new accept conn:", conn.RemoteAddr())
-		go handleConnection(netx.NewConn(conn.(*net.TCPConn)))
+		go handleConnection(netx.NewConn(conn))
 	}
 
 	log.Println("server end")
